@@ -67,12 +67,12 @@ async function updateBoard() {
   await saveStatusMessage({ channelId: state.channelId, messageId: message.id });
 }
 
-async function poll() {
-  if (running || Date.now() - lastPollAt < intervalMinutes * 60 * 1000) return false;
+async function poll({ force = false, users = Object.values(state.users) } = {}) {
+  if (running || (!force && Date.now() - lastPollAt < intervalMinutes * 60 * 1000)) return false;
   running = true;
-  lastPollAt = Date.now();
+  if (!force) lastPollAt = Date.now();
   try {
-    for (const user of Object.values(state.users)) {
+    for (const user of users) {
       try {
         const result = await fetchPlaytime(user.username, timeoutMs);
         const previousHours = user.hours;
@@ -109,10 +109,10 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'watch') {
       const username = normalizeUsername(interaction.options.getString('username', true));
       if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) return interaction.reply({ content: 'That is not a valid Minecraft username.', ephemeral: true });
-      addWatchedUser(username, interaction.user.id);
+      const added = addWatchedUser(username, interaction.user.id);
       await saveWatchers(state);
       await interaction.reply(`Now watching **${username}**. I will DM milestone alerts to you.`);
-      await poll();
+      if (added) await poll({ force: true, users: [state.users[username.toLowerCase()]] });
     } else if (interaction.commandName === 'watchbulk') {
       const input = interaction.options.getString('usernames', true);
       const usernames = [...new Set(input.split(/[\s,]+/).map(normalizeUsername).filter(Boolean))];
@@ -134,8 +134,8 @@ client.on('interactionCreate', async (interaction) => {
         alreadyWatching.length ? `Already watching: ${alreadyWatching.join(', ')}` : '',
         invalid.length ? `Invalid: ${invalid.join(', ')}` : '',
       ].filter(Boolean).join('\n');
-      await interaction.reply(`${summary}\nTheir playtime will be fetched on the next hourly update.`);
-      await poll();
+      await interaction.reply(`${summary}\nFetching their playtime now.`);
+      await poll({ force: true, users: added.map((username) => state.users[username.toLowerCase()]) });
     } else if (interaction.commandName === 'unwatch') {
       const username = normalizeUsername(interaction.options.getString('username', true));
       if (!state.users[username.toLowerCase()]) return interaction.reply({ content: 'That username is not being watched.', ephemeral: true });
